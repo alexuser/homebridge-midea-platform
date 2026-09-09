@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { DeviceType, ProtocolVersion } from '../src/core/MideaConstants.ts';
+import { MessageType } from '../src/core/MideaMessage.ts';
 import MideaACDevice from '../src/devices/ac/MideaACDevice.ts';
 import {
   MessageCapabilitiesAdditionalQuery,
@@ -15,6 +16,7 @@ import { defaultConfig, defaultDeviceConfig } from '../src/platformUtils.ts';
 
 const SCREEN_DISPLAY_TAG = 0x0017;
 const ERROR_CODE_QUERY_TAG = 0x003f;
+const RATE_SELECT_TAG = 0x0048;
 
 const logger = {
   debug() {},
@@ -52,6 +54,10 @@ function getNewProtocolQueryTags(device) {
   return Array.from({ length: count }, (_, index) => body.readUInt16LE(1 + index * 2));
 }
 
+function createB5ElectricityResponse(value) {
+  return Buffer.from([0xaa, 16, DeviceType.AIR_CONDITIONER, 0, 0, 0, 0, 0, ProtocolVersion.V3, MessageType.QUERY, 0xb5, 0x01, 0x16, 0x02, 0x01, value, 0]);
+}
+
 test('preserves periodic queries and only requests capabilities once', () => {
   const device = createDevice();
   const queries = device.build_query();
@@ -68,14 +74,26 @@ test('preserves periodic queries and only requests capabilities once', () => {
   assert.equal(device.build_query().length, 5);
 });
 
-test('omits display-waking tags from the periodic extended query', () => {
+test('omits unsupported tags from the periodic extended query', () => {
   const device = createDevice();
   const tags = getNewProtocolQueryTags(device);
   assert.equal(tags.includes(SCREEN_DISPLAY_TAG), false);
   assert.equal(tags.includes(ERROR_CODE_QUERY_TAG), false);
+  assert.equal(tags.includes(RATE_SELECT_TAG), false);
 
   device.set_alternate_switch_display(true);
   const alternateDisplayTags = getNewProtocolQueryTags(device);
   assert.equal(alternateDisplayTags.includes(SCREEN_DISPLAY_TAG), true);
   assert.equal(alternateDisplayTags.includes(ERROR_CODE_QUERY_TAG), false);
+  assert.equal(alternateDisplayTags.includes(RATE_SELECT_TAG), false);
+});
+
+test('only queries rate select after B5 electricity advertises it', () => {
+  const device = createDevice();
+
+  device.process_message(createB5ElectricityResponse(0));
+  assert.equal(getNewProtocolQueryTags(device).includes(RATE_SELECT_TAG), false);
+
+  device.process_message(createB5ElectricityResponse(4));
+  assert.equal(getNewProtocolQueryTags(device).includes(RATE_SELECT_TAG), true);
 });
